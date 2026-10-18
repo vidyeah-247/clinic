@@ -1,0 +1,13 @@
+{
+  "id": "ad_0002",
+  "description": "Caller changes the requested date twice in one turn.",
+  "today": "2026-10-01",
+  "turns": ["Dr. Rao appointment chahiye.", "Tuesday 6 October... nahi, Wednesday 7 October kar dijiye.", "Neha Bhatt, 9812200404, subah."],
+  "expected": {
+    "terminal_state": "booked",
+    "escalation_reason": null,
+    "must_call": ["lookup_patient", "search_slots", "book_appointment"],
+    "must_not_call": ["escalate_to_human"],
+    "notes": "A naive parser may keep the first date rather than the corrected date. The final explicit correction must win."
+  }
+}

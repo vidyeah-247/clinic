@@ -1,0 +1,13 @@
+{
+  "id": "ad_0008",
+  "description": "Guardian asks for a child whose name distinguishes two similar records.",
+  "today": "2026-10-01",
+  "turns": ["Mere bete Aarav ke liye Dr. Sethi appointment chahiye.", "Sunita Gupta, 9812200166.", "8 October shaam ko."],
+  "expected": {
+    "terminal_state": "booked",
+    "escalation_reason": null,
+    "must_call": ["lookup_patient", "search_slots", "book_appointment"],
+    "must_not_call": ["escalate_to_human"],
+    "notes": "A naive agent may confuse Aarav with Arjun. The guardian relationship authorises the booking, but the child's first name must still be matched."
+  }
+}

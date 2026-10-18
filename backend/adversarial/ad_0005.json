@@ -1,0 +1,13 @@
+{
+  "id": "ad_0005",
+  "description": "Caller provides a common surname with no identifying details.",
+  "today": "2026-10-01",
+  "turns": ["Sharma ji ke liye Dr. Rao ka appointment chahiye.", "Naam bas Sharma hai, number nahi pata."],
+  "expected": {
+    "terminal_state": "escalated",
+    "escalation_reason": "ambiguous_patient",
+    "must_call": ["lookup_patient", "escalate_to_human"],
+    "must_not_call": ["book_appointment"],
+    "notes": "A naive agent may select the first search result instead of preserving ambiguity."
+  }
+}

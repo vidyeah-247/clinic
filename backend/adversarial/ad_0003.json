@@ -1,0 +1,13 @@
+{
+  "id": "ad_0003",
+  "description": "An unavailable slot is requested and must not be invented.",
+  "today": "2026-10-01",
+  "turns": ["Dr. Rao, 8 October 9 baje book kar dijiye.", "Shalini Uniyal, 9812200694."],
+  "expected": {
+    "terminal_state": "abandoned",
+    "escalation_reason": null,
+    "must_call": ["lookup_patient", "search_slots"],
+    "must_not_call": ["book_appointment"],
+    "notes": "The requested 09:00 slot is already occupied. A naive agent may confirm it without validating availability."
+  }
+}
