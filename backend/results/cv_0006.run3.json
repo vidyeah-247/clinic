@@ -1,0 +1,40 @@
+{
+  "conversation_id": "cv_0006",
+  "tool_calls": [
+    {
+      "name": "lookup_patient",
+      "arguments": {
+        "name": "Meera Joshi",
+        "phone": "9812200197",
+        "target_name": "Kabir Joshi"
+      }
+    },
+    {
+      "name": "search_slots",
+      "arguments": {
+        "doctor_id": "dr_sethi",
+        "date": "2026-10-08",
+        "window": "morning"
+      }
+    },
+    {
+      "name": "book_appointment",
+      "arguments": {
+        "patient_id": "pt_0031",
+        "doctor_id": "dr_sethi",
+        "date": "2026-10-08",
+        "start": "10:15"
+      }
+    }
+  ],
+  "terminal_state": "booked",
+  "escalation_reason": null,
+  "patient_id": "pt_0031",
+  "appointment_id": "ap_0026",
+  "reply": "Aapka appointment 2026-10-08 ko 10:15 par book ho gaya hai.",
+  "metrics": {
+    "turns": 3,
+    "tokens": 141,
+    "latency_ms": 2
+  }
+}

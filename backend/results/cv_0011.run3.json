@@ -1,0 +1,22 @@
+{
+  "conversation_id": "cv_0011",
+  "tool_calls": [
+    {
+      "name": "escalate_to_human",
+      "arguments": {
+        "reason": "clinical_urgent",
+        "detail": "caller reports symptoms requiring immediate clinical attention"
+      }
+    }
+  ],
+  "terminal_state": "escalated",
+  "escalation_reason": "clinical_urgent",
+  "patient_id": null,
+  "appointment_id": null,
+  "reply": "Aapke symptoms ke liye abhi urgent clinical help zaroori hai. Main aapko human team se connect kar rahi hoon. Agar saans lene mein dikkat ya chest pain abhi ho raha hai, turant local emergency services se sampark karein.",
+  "metrics": {
+    "turns": 3,
+    "tokens": 125,
+    "latency_ms": 1
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "conversation_id": "cv_0007",
+  "tool_calls": [
+    {
+      "name": "lookup_patient",
+      "arguments": {
+        "name": "Sharma",
+        "phone": null,
+        "target_name": null
+      }
+    },
+    {
+      "name": "escalate_to_human",
+      "arguments": {
+        "reason": "ambiguous_patient",
+        "detail": "multiple patient records match; identity not established"
+      }
+    }
+  ],
+  "terminal_state": "escalated",
+  "escalation_reason": "ambiguous_patient",
+  "patient_id": null,
+  "appointment_id": null,
+  "reply": "Patient ki pehchaan clear nahi ho paayi. Main clinic team ko handoff kar rahi hoon.",
+  "metrics": {
+    "turns": 3,
+    "tokens": 111,
+    "latency_ms": 1
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "conversation_id": "cv_0004",
+  "tool_calls": [
+    {
+      "name": "lookup_patient",
+      "arguments": {
+        "name": "Priya Nair",
+        "phone": "9812200104",
+        "target_name": null
+      }
+    },
+    {
+      "name": "cancel_appointment",
+      "arguments": {
+        "patient_id": "pt_0004",
+        "date": "2026-10-01",
+        "doctor_id": null
+      }
+    }
+  ],
+  "terminal_state": "cancelled",
+  "escalation_reason": null,
+  "patient_id": "pt_0004",
+  "appointment_id": "ap_0002",
+  "reply": "Aapka appointment cancel kar diya gaya hai.",
+  "metrics": {
+    "turns": 2,
+    "tokens": 81,
+    "latency_ms": 1
+  }
+}

@@ -4,6 +4,7 @@ import copy
 import json
 import re
 import time
+import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -14,7 +15,13 @@ from pydantic import BaseModel, Field
 BASE_DIR = Path(__file__).resolve().parent
 CLINIC_PATH = BASE_DIR / "clinic.json"
 
-app = FastAPI(title="Sunrise Clinic Front Desk Agent", version="1.0.0")
+app = FastAPI(title="Sunrise Clinic Front Desk Agent", version="1.1.0")
+
+# Process-local reservations prevent two overlapping requests from booking or
+# rescheduling into the same slot. Reservations are released at the end of each
+# request because the assignment contract resets clinic state for every request.
+_SLOT_LOCK = threading.RLock()
+_ACTIVE_SLOT_RESERVATIONS: set[tuple[str, str, str]] = set()
 
 
 class RunRequest(BaseModel):
@@ -24,16 +31,63 @@ class RunRequest(BaseModel):
 
 
 class ToolRuntime:
-    """Deterministic, per-request tool layer. All mutations are isolated to this run."""
+    """Deterministic tool layer. It never calls an LLM and never writes fixture data.
+
+    Each request receives a fresh clinic.json copy, as required by schema.md.
+    In-process reservations protect overlapping requests from booking the same slot.
+    """
+
+    TOOL_SCHEMAS = {
+        "lookup_patient": {"required": {}, "optional": {"name": str, "phone": str, "target_name": str}},
+        "search_slots": {"required": {"doctor_id": str, "date": str}, "optional": {"window": str}},
+        "book_appointment": {"required": {"patient_id": str, "doctor_id": str, "date": str, "start": str}, "optional": {}},
+        "reschedule_appointment": {"required": {"patient_id": str, "new_date": str, "new_start": str}, "optional": {"doctor_id": str}},
+        "cancel_appointment": {"required": {"patient_id": str}, "optional": {"date": str, "doctor_id": str}},
+        "escalate_to_human": {"required": {"reason": str, "detail": str}, "optional": {}},
+    }
 
     def __init__(self, clinic: dict[str, Any]):
         self.data = clinic
         self.calls: list[dict[str, Any]] = []
+        self._reservations: set[tuple[str, str, str]] = set()
 
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append({"name": name, "arguments": copy.deepcopy(arguments)})
-        fn = getattr(self, f"_{name}")
-        return fn(**arguments)
+        safe_arguments = copy.deepcopy(arguments) if isinstance(arguments, dict) else arguments
+        self.calls.append({"name": name, "arguments": safe_arguments})
+        if name not in self.TOOL_SCHEMAS:
+            return {"success": False, "error": "unknown_tool", "detail": f"Unknown tool '{name}'. Allowed tools: {', '.join(self.TOOL_SCHEMAS)}."}
+        if not isinstance(arguments, dict):
+            return {"success": False, "error": "invalid_arguments", "detail": "Tool arguments must be a JSON object."}
+
+        schema = self.TOOL_SCHEMAS[name]
+        missing = [key for key in schema["required"] if key not in arguments]
+        unknown = [key for key in arguments if key not in schema["required"] and key not in schema["optional"]]
+        if missing or unknown:
+            pieces = []
+            if missing:
+                pieces.append("Missing required argument(s): " + ", ".join(sorted(missing)) + ".")
+            if unknown:
+                pieces.append("Unknown argument(s): " + ", ".join(sorted(unknown)) + ".")
+            return {"success": False, "error": "invalid_arguments", "detail": " ".join(pieces)}
+
+        for key, expected_type in {**schema["required"], **schema["optional"]}.items():
+            if key in arguments and arguments[key] is not None and not isinstance(arguments[key], expected_type):
+                return {"success": False, "error": "invalid_arguments", "detail": f"Argument '{key}' must be a {expected_type.__name__}."}
+            if key in schema["required"] and (arguments[key] is None or (isinstance(arguments[key], str) and not arguments[key].strip())):
+                return {"success": False, "error": "invalid_arguments", "detail": f"Argument '{key}' must be a non-empty {expected_type.__name__}."}
+
+        try:
+            return getattr(self, f"_{name}")(**arguments)
+        except TypeError as exc:
+            return {"success": False, "error": "invalid_arguments", "detail": f"Invalid arguments for {name}: {exc}."}
+        except (ValueError, KeyError) as exc:
+            return {"success": False, "error": "invalid_arguments", "detail": f"Invalid arguments for {name}: {exc}."}
+
+    def release_reservations(self) -> None:
+        with _SLOT_LOCK:
+            for key in self._reservations:
+                _ACTIVE_SLOT_RESERVATIONS.discard(key)
+            self._reservations.clear()
 
     def _lookup_patient(
         self,
@@ -41,7 +95,11 @@ class ToolRuntime:
         phone: Optional[str] = None,
         target_name: Optional[str] = None,
     ) -> dict[str, Any]:
-        patients = self.data["patients"]
+        if name is not None and not name.strip():
+            return {"candidates": [], "resolved": None, "error": "invalid_name", "detail": "Provide a non-empty patient name or omit name."}
+        if phone is not None and (not digits(phone) or len(digits(phone)) not in (10, 11, 12)):
+            return {"candidates": [], "resolved": None, "error": "invalid_phone", "detail": "Provide the registered phone number with 10–12 digits."}
+        patients = self.data.get("patients", [])
         caller_matches = list(patients)
         if name:
             norm = normalize(name)
@@ -51,9 +109,8 @@ class ToolRuntime:
             else:
                 caller_matches = [p for p in patients if norm in normalize(p["name"]) or normalize(p["name"]) in norm]
         if phone:
-            caller_matches = [p for p in caller_matches if p["phone"] == digits(phone)]
+            caller_matches = [p for p in caller_matches if digits(p.get("phone", "")) == digits(phone)]
         if name and phone and not caller_matches:
-            # Do not silently choose a record when name and phone disagree.
             return {"candidates": [], "resolved": None}
 
         target_matches = None
@@ -61,104 +118,141 @@ class ToolRuntime:
             target_norm = normalize(target_name)
             target_matches = [p for p in patients if normalize(p["name"]) == target_norm]
             if not target_matches:
-                target_matches = [p for p in patients if target_norm in normalize(p["name"])]
+                target_matches = [p for p in patients if target_norm in normalize(p["name"]) or normalize(p["name"]) in target_norm]
 
         candidates: list[dict[str, Any]] = []
         if target_matches is not None:
-            # For a child/third-party booking, only candidates who are the named target
-            # and whose guardian relationship can be checked are returned.
             for target in target_matches:
                 for caller in caller_matches:
                     if caller["id"] == target["id"] or target["id"] in caller.get("guardian_of", []):
                         candidates.append({"patient_id": target["id"], "name": target["name"], "caller_id": caller["id"], "authorised": True})
-            # Return matching target candidates even when the caller is not authorised;
-            # the orchestrator must still reject a third party.
             if not candidates:
                 candidates = [{"patient_id": p["id"], "name": p["name"], "caller_id": caller_matches[0]["id"] if len(caller_matches) == 1 else None, "authorised": False} for p in target_matches]
         else:
             candidates = [{"patient_id": p["id"], "name": p["name"], "caller_id": p["id"], "authorised": True} for p in caller_matches]
 
+        # Never resolve an ambiguous lookup by selecting the first candidate.
         resolved = candidates[0] if len(candidates) == 1 else None
         return {"candidates": candidates, "resolved": resolved}
 
     def _search_slots(self, doctor_id: str, date: str, window: Optional[str] = None) -> dict[str, Any]:
-        doctor = next((d for d in self.data["doctors"] if d["id"] == doctor_id), None)
-        if not doctor:
-            return {"slots": [], "error": "unknown_doctor"}
+        if not doctor_id.strip():
+            return {"slots": [], "error": "invalid_arguments", "detail": "doctor_id must be non-empty."}
         try:
             requested = datetime.strptime(date, "%Y-%m-%d").date()
-        except ValueError:
-            return {"slots": [], "error": "invalid_date"}
+            if requested.isoformat() != date:
+                raise ValueError
+        except (ValueError, TypeError):
+            return {"slots": [], "error": "invalid_date", "detail": "date must use YYYY-MM-DD, for example 2026-10-03."}
+        if window not in (None, "any", "morning", "afternoon", "evening"):
+            return {"slots": [], "error": "invalid_window", "detail": "window must be morning, afternoon, evening, any, or omitted."}
+        doctor = next((d for d in self.data.get("doctors", []) if d["id"] == doctor_id), None)
+        if not doctor:
+            return {"slots": [], "error": "unknown_doctor", "detail": f"No doctor exists with id '{doctor_id}'."}
         if date in self.data.get("holidays", []):
-            return {"slots": [], "error": "clinic_closed"}
+            return {"slots": [], "error": "clinic_closed", "detail": "The clinic is closed on this date."}
         if date in doctor.get("leave_dates", []):
-            return {"slots": [], "error": "doctor_on_leave"}
+            return {"slots": [], "error": "doctor_on_leave", "detail": "The requested doctor is on leave on this date."}
         day = requested.strftime("%a")
-        occupied = {
-            a["start"] for a in self.data["appointments"]
-            if a["doctor_id"] == doctor_id and a["date"] == date and a["status"] == "booked"
-        }
+        with _SLOT_LOCK:
+            occupied = {
+                (a["doctor_id"], a["date"], a["start"])
+                for a in self.data.get("appointments", []) if a.get("status") == "booked"
+            }
+            occupied.update(_ACTIVE_SLOT_RESERVATIONS)
         slots: list[dict[str, str]] = []
-        step = int(self.data["clinic"].get("slot_minutes", 15))
-        for w in doctor["windows"]:
-            if w["day"] != day:
-                continue
-            start = datetime.strptime(w["start"], "%H:%M")
-            end = datetime.strptime(w["end"], "%H:%M")
-            cur = start
-            while cur + timedelta(minutes=step) <= end:
-                start_str = cur.strftime("%H:%M")
-                if start_str not in occupied:
-                    hour = cur.hour
-                    period = "morning" if hour < 12 else ("afternoon" if hour < 17 else "evening")
-                    if not window or window == "any" or period == window:
+        step = int(self.data.get("clinic", {}).get("slot_minutes", 15))
+        if step <= 0 or step > 240:
+            return {"slots": [], "error": "invalid_clinic_config", "detail": "clinic.slot_minutes must be between 1 and 240."}
+        try:
+            for w in doctor.get("windows", []):
+                if w["day"] != day:
+                    continue
+                start = datetime.strptime(w["start"], "%H:%M")
+                end = datetime.strptime(w["end"], "%H:%M")
+                cur = start
+                while cur + timedelta(minutes=step) <= end:
+                    start_str = cur.strftime("%H:%M")
+                    period = "morning" if cur.hour < 12 else ("afternoon" if cur.hour < 17 else "evening")
+                    if (doctor_id, date, start_str) not in occupied and (not window or window == "any" or period == window):
                         slots.append({"start": start_str, "end": (cur + timedelta(minutes=step)).strftime("%H:%M")})
-                cur += timedelta(minutes=step)
-        # Overlapping clinic windows can produce duplicate starts; keep first occurrence.
-        unique = {s["start"]: s for s in slots}
+                    cur += timedelta(minutes=step)
+        except (KeyError, ValueError) as exc:
+            return {"slots": [], "error": "invalid_clinic_config", "detail": f"Invalid doctor schedule configuration: {exc}."}
+        unique = {slot["start"]: slot for slot in slots}
         return {"slots": [unique[k] for k in sorted(unique)], "error": None}
 
     def _book_appointment(self, patient_id: str, doctor_id: str, date: str, start: str) -> dict[str, Any]:
-        patient = next((p for p in self.data["patients"] if p["id"] == patient_id), None)
-        doctor = next((d for d in self.data["doctors"] if d["id"] == doctor_id), None)
-        if not patient or not doctor:
-            return {"success": False, "error": "unknown_patient_or_doctor", "appointment_id": None}
-        slots = self._search_slots(doctor_id, date, None)
-        chosen = next((s for s in slots["slots"] if s["start"] == start), None)
-        if not chosen:
-            return {"success": False, "error": slots.get("error") or "slot_unavailable", "appointment_id": None}
-        next_num = max([int(a["id"].split("_")[1]) for a in self.data["appointments"]] + [0]) + 1
-        appointment = {
-            "id": f"ap_{next_num:04d}", "patient_id": patient_id,
-            "doctor_id": doctor_id, "date": date, "start": start,
-            "end": chosen["end"], "status": "booked",
-        }
-        self.data["appointments"].append(appointment)
-        return {"success": True, "appointment_id": appointment["id"], "appointment": appointment}
+        if not re.fullmatch(r"\d{2}:\d{2}", start or ""):
+            return {"success": False, "error": "invalid_time", "detail": "start must use HH:MM, for example 09:30.", "appointment_id": None}
+        try:
+            parsed = datetime.strptime(start, "%H:%M")
+            if parsed.strftime("%H:%M") != start:
+                raise ValueError
+        except ValueError:
+            return {"success": False, "error": "invalid_time", "detail": "start must be a valid 24-hour time in HH:MM format.", "appointment_id": None}
+        patient = next((p for p in self.data.get("patients", []) if p["id"] == patient_id), None)
+        doctor = next((d for d in self.data.get("doctors", []) if d["id"] == doctor_id), None)
+        if not patient:
+            return {"success": False, "error": "unknown_patient", "detail": f"No patient exists with id '{patient_id}'.", "appointment_id": None}
+        if not doctor:
+            return {"success": False, "error": "unknown_doctor", "detail": f"No doctor exists with id '{doctor_id}'.", "appointment_id": None}
+        key = (doctor_id, date, start)
+        with _SLOT_LOCK:
+            if key in _ACTIVE_SLOT_RESERVATIONS:
+                return {"success": False, "error": "slot_reserved", "detail": "This slot is currently being booked by another conversation. Please choose another slot.", "appointment_id": None}
+            slots = self._search_slots(doctor_id, date, None)
+            chosen = next((slot for slot in slots.get("slots", []) if slot["start"] == start), None)
+            if not chosen:
+                return {"success": False, "error": slots.get("error") or "slot_unavailable", "detail": slots.get("detail") or "The requested slot is not available.", "appointment_id": None}
+            _ACTIVE_SLOT_RESERVATIONS.add(key)
+            self._reservations.add(key)
+            next_num = max([int(a["id"].split("_")[1]) for a in self.data.get("appointments", []) if re.fullmatch(r"ap_\d+", a.get("id", ""))] + [0]) + 1
+            appointment = {"id": f"ap_{next_num:04d}", "patient_id": patient_id, "doctor_id": doctor_id, "date": date, "start": start, "end": chosen["end"], "status": "booked"}
+            self.data["appointments"].append(appointment)
+            return {"success": True, "appointment_id": appointment["id"], "appointment": appointment}
 
-    def _reschedule_appointment(
-        self, patient_id: str, new_date: str, new_start: str,
-        doctor_id: Optional[str] = None,
-    ) -> dict[str, Any]:
-        appt = next((a for a in self.data["appointments"] if a["patient_id"] == patient_id and a["status"] == "booked" and (not doctor_id or a["doctor_id"] == doctor_id)), None)
+    def _reschedule_appointment(self, patient_id: str, new_date: str, new_start: str, doctor_id: Optional[str] = None) -> dict[str, Any]:
+        if not re.fullmatch(r"\d{2}:\d{2}", new_start or ""):
+            return {"success": False, "error": "invalid_time", "detail": "new_start must use HH:MM, for example 09:30.", "appointment_id": None}
+        try:
+            parsed = datetime.strptime(new_start, "%H:%M")
+            if parsed.strftime("%H:%M") != new_start:
+                raise ValueError
+            datetime.strptime(new_date, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            return {"success": False, "error": "invalid_arguments", "detail": "new_date must be YYYY-MM-DD and new_start must be a valid HH:MM time.", "appointment_id": None}
+        appt = next((a for a in self.data.get("appointments", []) if a["patient_id"] == patient_id and a["status"] == "booked" and (not doctor_id or a["doctor_id"] == doctor_id)), None)
         if not appt:
-            return {"success": False, "error": "appointment_not_found", "appointment_id": None}
+            return {"success": False, "error": "appointment_not_found", "detail": "No active appointment matched this patient and doctor.", "appointment_id": None}
         target_doctor = doctor_id or appt["doctor_id"]
-        slots = self._search_slots(target_doctor, new_date, None)
-        chosen = next((s for s in slots["slots"] if s["start"] == new_start), None)
-        if not chosen:
-            return {"success": False, "error": slots.get("error") or "slot_unavailable", "appointment_id": appt["id"]}
-        appt.update({"doctor_id": target_doctor, "date": new_date, "start": new_start, "end": chosen["end"]})
-        return {"success": True, "appointment_id": appt["id"], "appointment": appt}
+        key = (target_doctor, new_date, new_start)
+        with _SLOT_LOCK:
+            if key in _ACTIVE_SLOT_RESERVATIONS:
+                return {"success": False, "error": "slot_reserved", "detail": "This slot is currently being changed by another conversation.", "appointment_id": appt["id"]}
+            slots = self._search_slots(target_doctor, new_date, None)
+            chosen = next((slot for slot in slots.get("slots", []) if slot["start"] == new_start), None)
+            if not chosen:
+                return {"success": False, "error": slots.get("error") or "slot_unavailable", "detail": slots.get("detail") or "The requested slot is not available.", "appointment_id": appt["id"]}
+            _ACTIVE_SLOT_RESERVATIONS.add(key)
+            self._reservations.add(key)
+            appt.update({"doctor_id": target_doctor, "date": new_date, "start": new_start, "end": chosen["end"]})
+            return {"success": True, "appointment_id": appt["id"], "appointment": appt}
 
     def _cancel_appointment(self, patient_id: str, date: Optional[str] = None, doctor_id: Optional[str] = None) -> dict[str, Any]:
-        candidates = [a for a in self.data["appointments"] if a["patient_id"] == patient_id and a["status"] == "booked"]
+        if date is not None:
+            try:
+                if datetime.strptime(date, "%Y-%m-%d").date().isoformat() != date:
+                    raise ValueError
+            except ValueError:
+                return {"success": False, "error": "invalid_date", "detail": "date must use YYYY-MM-DD, for example 2026-10-03.", "appointment_id": None}
+        candidates = [a for a in self.data.get("appointments", []) if a["patient_id"] == patient_id and a["status"] == "booked"]
         if date:
             candidates = [a for a in candidates if a["date"] == date]
         if doctor_id:
             candidates = [a for a in candidates if a["doctor_id"] == doctor_id]
         if not candidates:
-            return {"success": False, "error": "appointment_not_found", "appointment_id": None}
+            return {"success": False, "error": "appointment_not_found", "detail": "No active appointment matched the supplied patient, date and doctor filters.", "appointment_id": None}
         appt = sorted(candidates, key=lambda a: (a["date"], a["start"]))[0]
         appt["status"] = "cancelled"
         return {"success": True, "appointment_id": appt["id"], "appointment": appt}
@@ -166,9 +260,10 @@ class ToolRuntime:
     def _escalate_to_human(self, reason: str, detail: str) -> dict[str, Any]:
         allowed = {"clinical_urgent", "medical_advice", "not_authorised", "ambiguous_patient", "out_of_scope"}
         if reason not in allowed:
-            return {"success": False, "error": "invalid_escalation_reason"}
+            return {"success": False, "error": "invalid_escalation_reason", "detail": "reason must be one of: " + ", ".join(sorted(allowed)) + "."}
+        if not detail.strip():
+            return {"success": False, "error": "invalid_arguments", "detail": "detail must explain why a human handoff is required."}
         return {"success": True, "reason": reason, "detail": detail}
-
 
 def normalize(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
@@ -480,14 +575,17 @@ def run_agent(payload: RunRequest) -> dict[str, Any]:
                 if booking_intent and doctor_id and requested_date:
                     tools.call("search_slots", {"doctor_id": doctor_id, "date": requested_date, "window": parse_window(text) or "any"})
                 state = "abandoned"
-                final_message = "Patient ki details nahi mili; koi appointment action nahi hua."
+                final_message = (
+                    "Appointment book karne ke liye patient ka poora naam aur "
+                    "registered phone number batayein. Abhi koi booking nahi hui."
+                )
         else:
             state = "abandoned"
 
     reply = make_reply(state, reason, appointment, final_message)
     elapsed_ms = max(1, int((time.perf_counter() - started) * 1000))
     token_estimate = max(1, (len(text) + len(reply) + sum(len(json.dumps(c, ensure_ascii=False)) for c in tools.calls)) // 4)
-    return {
+    response = {
         "conversation_id": payload.conversation_id,
         "tool_calls": tools.calls,
         "terminal_state": state,
@@ -497,6 +595,9 @@ def run_agent(payload: RunRequest) -> dict[str, Any]:
         "reply": reply,
         "metrics": {"turns": len(payload.turns), "tokens": token_estimate, "latency_ms": elapsed_ms},
     }
+    tools.release_reservations()
+    return response
+
 @app.post("/agent/run")
 def agent_run(payload: RunRequest) -> dict[str, Any]:
     return run_agent(payload)

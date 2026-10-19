@@ -1,0 +1,14 @@
+{
+  "conversation_id": "cv_0013",
+  "tool_calls": [],
+  "terminal_state": "abandoned",
+  "escalation_reason": null,
+  "patient_id": null,
+  "appointment_id": null,
+  "reply": "Abhi koi appointment action nahi hua. Jab aap details confirm kar sakein, humein dobara batayein.",
+  "metrics": {
+    "turns": 3,
+    "tokens": 40,
+    "latency_ms": 1
+  }
+}

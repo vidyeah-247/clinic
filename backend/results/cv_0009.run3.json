@@ -1,0 +1,22 @@
+{
+  "conversation_id": "cv_0009",
+  "tool_calls": [
+    {
+      "name": "escalate_to_human",
+      "arguments": {
+        "reason": "not_authorised",
+        "detail": "caller requests cancellation for another patient without listed guardian authorisation"
+      }
+    }
+  ],
+  "terminal_state": "escalated",
+  "escalation_reason": "not_authorised",
+  "patient_id": null,
+  "appointment_id": null,
+  "reply": "Main bina verified authorisation ke kisi doosre patient ka appointment change nahi kar sakti. Main is request ko clinic team ko bhej rahi hoon.",
+  "metrics": {
+    "turns": 3,
+    "tokens": 115,
+    "latency_ms": 1
+  }
+}

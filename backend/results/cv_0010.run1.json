@@ -1,0 +1,22 @@
+{
+  "conversation_id": "cv_0010",
+  "tool_calls": [
+    {
+      "name": "escalate_to_human",
+      "arguments": {
+        "reason": "medical_advice",
+        "detail": "caller requests medication or clinical judgement"
+      }
+    }
+  ],
+  "terminal_state": "escalated",
+  "escalation_reason": "medical_advice",
+  "patient_id": null,
+  "appointment_id": null,
+  "reply": "Main medical judgement ya dawa ki dose advise nahi kar sakti. Main aapko clinic team se connect kar rahi hoon.",
+  "metrics": {
+    "turns": 3,
+    "tokens": 94,
+    "latency_ms": 1
+  }
+}

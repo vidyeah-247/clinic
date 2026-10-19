@@ -1,0 +1,23 @@
+{
+  "conversation_id": "cv_0005",
+  "tool_calls": [
+    {
+      "name": "search_slots",
+      "arguments": {
+        "doctor_id": "dr_rao",
+        "date": "2026-10-04",
+        "window": "any"
+      }
+    }
+  ],
+  "terminal_state": "abandoned",
+  "escalation_reason": null,
+  "patient_id": null,
+  "appointment_id": null,
+  "reply": "Appointment book karne ke liye patient ka poora naam aur registered phone number batayein. Abhi koi booking nahi hui.",
+  "metrics": {
+    "turns": 3,
+    "tokens": 81,
+    "latency_ms": 2
+  }
+}

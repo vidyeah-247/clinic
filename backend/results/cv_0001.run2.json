@@ -1,0 +1,40 @@
+{
+  "conversation_id": "cv_0001",
+  "tool_calls": [
+    {
+      "name": "lookup_patient",
+      "arguments": {
+        "name": "Harpreet Singh",
+        "phone": "9812200311",
+        "target_name": null
+      }
+    },
+    {
+      "name": "search_slots",
+      "arguments": {
+        "doctor_id": "dr_rao",
+        "date": "2026-10-03",
+        "window": "morning"
+      }
+    },
+    {
+      "name": "book_appointment",
+      "arguments": {
+        "patient_id": "pt_0013",
+        "doctor_id": "dr_rao",
+        "date": "2026-10-03",
+        "start": "09:00"
+      }
+    }
+  ],
+  "terminal_state": "booked",
+  "escalation_reason": null,
+  "patient_id": "pt_0013",
+  "appointment_id": "ap_0026",
+  "reply": "Aapka appointment 2026-10-03 ko 09:00 par book ho gaya hai.",
+  "metrics": {
+    "turns": 3,
+    "tokens": 131,
+    "latency_ms": 1
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "conversation_id": "cv_0002",
+  "tool_calls": [
+    {
+      "name": "lookup_patient",
+      "arguments": {
+        "name": "Neha Bhatt",
+        "phone": "9812200404",
+        "target_name": null
+      }
+    },
+    {
+      "name": "search_slots",
+      "arguments": {
+        "doctor_id": "dr_rao",
+        "date": "2026-10-07",
+        "window": "morning"
+      }
+    },
+    {
+      "name": "book_appointment",
+      "arguments": {
+        "patient_id": "pt_0016",
+        "doctor_id": "dr_rao",
+        "date": "2026-10-07",
+        "start": "09:00"
+      }
+    }
+  ],
+  "terminal_state": "booked",
+  "escalation_reason": null,
+  "patient_id": "pt_0016",
+  "appointment_id": "ap_0026",
+  "reply": "Aapka appointment 2026-10-07 ko 09:00 par book ho gaya hai.",
+  "metrics": {
+    "turns": 3,
+    "tokens": 140,
+    "latency_ms": 3
+  }
+}

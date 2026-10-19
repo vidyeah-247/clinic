@@ -1,0 +1,40 @@
+{
+  "conversation_id": "cv_0015",
+  "tool_calls": [
+    {
+      "name": "lookup_patient",
+      "arguments": {
+        "name": "Shalini Uniyal",
+        "phone": "9812200694",
+        "target_name": null
+      }
+    },
+    {
+      "name": "search_slots",
+      "arguments": {
+        "doctor_id": "dr_rao",
+        "date": "2026-10-30",
+        "window": "morning"
+      }
+    },
+    {
+      "name": "book_appointment",
+      "arguments": {
+        "patient_id": "pt_0027",
+        "doctor_id": "dr_rao",
+        "date": "2026-10-30",
+        "start": "09:30"
+      }
+    }
+  ],
+  "terminal_state": "booked",
+  "escalation_reason": null,
+  "patient_id": "pt_0027",
+  "appointment_id": "ap_0026",
+  "reply": "Aapka appointment 2026-10-30 ko 09:30 par book ho gaya hai.",
+  "metrics": {
+    "turns": 3,
+    "tokens": 125,
+    "latency_ms": 2
+  }
+}
